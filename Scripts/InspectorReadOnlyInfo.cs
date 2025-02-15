@@ -8,71 +8,72 @@ public class InspectorReadOnlyInfo : MonoBehaviour { }
 [CustomEditor(typeof(InspectorReadOnlyInfo))]
 public class InspectorReadOnlyInfoEditor : Editor
 {
-    static Dictionary<MonoBehaviour, Dictionary<MemberInfo, (object value, float lastChangeTime, bool showMessage)>> storage
+    static Dictionary<MonoBehaviour, Dictionary<MemberInfo, (object value, float lastChangeTime, bool showMessage)>> valueCache
         = new Dictionary<MonoBehaviour, Dictionary<MemberInfo, (object, float, bool)>>();
 
     static Dictionary<MonoBehaviour, bool> foldouts = new Dictionary<MonoBehaviour, bool>();
 
     static Dictionary<System.Type, MemberInfo[]> memberCache = new Dictionary<System.Type, MemberInfo[]>();
 
+    static bool displayUpdateMessages = true;
+
     public override void OnInspectorGUI()
     {
         base.OnInspectorGUI();
-
+        displayUpdateMessages = EditorGUILayout.Toggle("Display update messages", displayUpdateMessages);
         float now = (float)EditorApplication.timeSinceStartup;
         var allMono = FindObjectsOfType<MonoBehaviour>();
         var validObjects = new List<MonoBehaviour>();
-        foreach (var m in allMono)
+        foreach (var mb in allMono)
         {
-            var members = GetInspectorReadOnlyMembers(m);
+            var members = GetReadOnlyMembers(mb);
             if (members.Length > 0)
             {
-                validObjects.Add(m);
-                if (!storage.ContainsKey(m))
-                    storage[m] = new Dictionary<MemberInfo, (object, float, bool)>();
-                if (!foldouts.ContainsKey(m))
-                    foldouts[m] = false;
+                validObjects.Add(mb);
+                if (!valueCache.ContainsKey(mb))
+                    valueCache[mb] = new Dictionary<MemberInfo, (object, float, bool)>();
+                if (!foldouts.ContainsKey(mb))
+                    foldouts[mb] = false;
             }
         }
-        var keys = new List<MonoBehaviour>(storage.Keys);
-        foreach (var m in keys)
+        var keys = new List<MonoBehaviour>(valueCache.Keys);
+        foreach (var mb in keys)
         {
-            if (!validObjects.Contains(m))
+            if (!validObjects.Contains(mb))
             {
-                storage.Remove(m);
-                foldouts.Remove(m);
+                valueCache.Remove(mb);
+                foldouts.Remove(mb);
             }
         }
-
         EditorGUILayout.Space();
-        foreach (var m in validObjects)
+        foreach (var mb in validObjects)
         {
-            if (m == null) continue;
-            foldouts[m] = EditorGUILayout.Foldout(foldouts[m], $"{m.name} ({m.GetType().Name})", true);
-            if (!foldouts[m]) continue;
+            if (mb == null) continue;
+            foldouts[mb] = EditorGUILayout.Foldout(foldouts[mb], $"{mb.name} ({mb.GetType().Name})", true);
+            if (!foldouts[mb]) continue;
             EditorGUI.indentLevel++;
-            var members = GetInspectorReadOnlyMembers(m);
-            foreach (var mm in members)
+            var members = GetReadOnlyMembers(mb);
+            foreach (var member in members)
             {
-                object currentValue = GetMemberValue(mm, m);
-                if (!storage[m].TryGetValue(mm, out var record))
+                object currentValue = GetMemberValue(member, mb);
+                if (!valueCache[mb].TryGetValue(member, out var record))
                 {
                     record = (currentValue, now, false);
-                    storage[m][mm] = record;
+                    valueCache[mb][member] = record;
                 }
                 bool changed = !Equals(record.value, currentValue);
                 if (changed)
                 {
                     record = (currentValue, now, true);
-                    storage[m][mm] = record;
+                    valueCache[mb][member] = record;
                 }
                 else if (record.showMessage && (now - record.lastChangeTime >= 2f))
                 {
                     record = (record.value, record.lastChangeTime, false);
-                    storage[m][mm] = record;
+                    valueCache[mb][member] = record;
                 }
-                EditorGUILayout.LabelField(mm.Name, currentValue == null ? "null" : currentValue.ToString());
-                if (record.showMessage && (now - record.lastChangeTime < 2f))
+                EditorGUILayout.LabelField(member.Name, currentValue == null ? "null" : currentValue.ToString());
+                if (displayUpdateMessages && record.showMessage && (now - record.lastChangeTime < 2f))
                 {
                     var style = new GUIStyle(EditorStyles.label) { normal = { textColor = Color.green } };
                     EditorGUILayout.LabelField("Value updated", style);
@@ -83,30 +84,27 @@ public class InspectorReadOnlyInfoEditor : Editor
         if (EditorApplication.isPlaying) Repaint();
     }
 
-    private MemberInfo[] GetInspectorReadOnlyMembers(MonoBehaviour m)
+    private MemberInfo[] GetReadOnlyMembers(MonoBehaviour mb)
     {
-        var type = m.GetType();
+        var type = mb.GetType();
         if (memberCache.TryGetValue(type, out var members))
             return members;
-
         var allMembers = type.GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         var list = new List<MemberInfo>();
-        foreach (var mm in allMembers)
+        foreach (var member in allMembers)
         {
-            if (mm.GetCustomAttribute<InspectorReadOnlyAttribute>() != null)
-                list.Add(mm);
+            if (member.GetCustomAttribute<InspectorReadOnlyAttribute>() != null)
+                list.Add(member);
         }
         members = list.ToArray();
         memberCache[type] = members;
         return members;
     }
 
-    private object GetMemberValue(MemberInfo mm, MonoBehaviour m)
+    private object GetMemberValue(MemberInfo member, MonoBehaviour mb)
     {
-        if (mm is FieldInfo fi)
-            return fi.GetValue(m);
-        else if (mm is PropertyInfo pi)
-            return pi.GetValue(m);
+        if (member is FieldInfo field) return field.GetValue(mb);
+        if (member is PropertyInfo prop) return prop.GetValue(mb);
         return null;
     }
 }
